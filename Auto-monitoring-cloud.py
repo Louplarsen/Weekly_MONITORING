@@ -1,5 +1,6 @@
 import os
 import html
+import unicodedata
 from datetime import datetime
 import pandas as pd
 from dateutil import parser as dateparser
@@ -15,19 +16,30 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # --- Colonnes attendues ---
 REQUIRED_COLS = {
-    "publication": ["media outlet", "publication", "media", "publication", "journal"],
-    "published": ["published", "date", "publication_date", "date de parution", "date"],
-    "URL": ["url", "lien", "link", "adresse web", "lien"],
+    "publication": ["media outlet", "publication", "media", "journal"],
+    "published": ["published", "date", "publication_date", "date de parution"],
+    "URL": ["url", "lien", "link", "adresse web"],
 }
 CONTENT_CANDIDATES = ["snippet", "content", "texte", "text", "body", "résumé", "summary"]
 TITLE_CANDIDATES = ["article", "titre", "title", "intitulé", "headline"]
 
-# --- Fonctions utilitaires ---
+# --- Normalisation des noms de colonnes ---
+def normalize_colname(name: str) -> str:
+    """Normalise un nom de colonne : minuscule, sans accents, sans espaces superflus."""
+    name = str(name).strip().lower()
+    name = ''.join(
+        c for c in unicodedata.normalize("NFD", name)
+        if unicodedata.category(c) != "Mn"
+    )
+    return name
+
 def find_col(df, candidates):
-    cols_lower = {c.lower(): c for c in df.columns}
+    """Trouve la première colonne du dataframe qui correspond à une des candidates normalisées."""
+    normalized_map = {normalize_colname(c): c for c in df.columns}
     for cand in candidates:
-        if cand.lower() in cols_lower:
-            return cols_lower[cand.lower()]
+        norm_cand = normalize_colname(cand)
+        if norm_cand in normalized_map:
+            return normalized_map[norm_cand]
     return None
 
 def coerce_date(x):
@@ -115,7 +127,7 @@ report_title = st.text_input("✏️ Titre du rapport", "Revue de presse")
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name="Articles")
         issues, col_map, content_col, title_col = validate_dataframe(df)
 
         if issues:
@@ -166,4 +178,3 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Erreur lecture ou traitement Excel : {e}")
-
