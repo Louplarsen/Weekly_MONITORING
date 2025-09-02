@@ -15,12 +15,12 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # --- Colonnes attendues ---
 REQUIRED_COLS = {
-    "publication": ["media outlet", "publication", "media"],
-    "published": ["published", "date", "publication_date"],
-    "URL": ["url", "lien", "link"],
+    "publication": ["media outlet", "publication", "media", "publication", "journal"],
+    "published": ["published", "date", "publication_date", "date de parution", "date"],
+    "URL": ["url", "lien", "link", "adresse web", "lien"],
 }
 CONTENT_CANDIDATES = ["snippet", "content", "texte", "text", "body", "résumé", "summary"]
-TITLE_CANDIDATES = ["article", "titre", "title"]
+TITLE_CANDIDATES = ["article", "titre", "title", "intitulé", "headline"]
 
 # --- Fonctions utilitaires ---
 def find_col(df, candidates):
@@ -166,3 +166,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Erreur lecture ou traitement Excel : {e}")
+
