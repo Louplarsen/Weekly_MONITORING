@@ -5,9 +5,12 @@ from datetime import datetime
 import pandas as pd
 from dateutil import parser as dateparser
 import validators
-import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
+from flask import Flask, render_template, request
+
+# --- Flask app ---
+app = Flask(__name__)
 
 # --- Chargement des variables d'environnement ---
 load_dotenv()
@@ -23,9 +26,8 @@ REQUIRED_COLS = {
 CONTENT_CANDIDATES = ["snippet", "content", "texte", "text", "body", "résumé", "summary"]
 TITLE_CANDIDATES = ["article", "titre", "title", "intitulé", "headline"]
 
-# --- Normalisation des noms de colonnes ---
+# --- Fonctions utilitaires ---
 def normalize_colname(name: str) -> str:
-    """Normalise un nom de colonne : minuscule, sans accents, sans espaces superflus."""
     name = str(name).strip().lower()
     name = ''.join(
         c for c in unicodedata.normalize("NFD", name)
@@ -34,7 +36,6 @@ def normalize_colname(name: str) -> str:
     return name
 
 def find_col(df, candidates):
-    """Trouve la première colonne du dataframe qui correspond à une des candidates normalisées."""
     normalized_map = {normalize_colname(c): c for c in df.columns}
     for cand in candidates:
         norm_cand = normalize_colname(cand)
@@ -118,30 +119,24 @@ def build_email_html(rows, title="Revue de presse"):
     parts.append('</div>')
     return "\n".join(parts)
 
-# --- Streamlit App ---
-st.set_page_config(page_title="Revue de Presse", layout="wide")
-st.title("📰 Générateur de Revue de Presse")
+# --- Routes Flask ---
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        report_title = request.form.get("title", "Revue de presse")
+        file = request.files.get("file")
 
-uploaded_file = st.file_uploader("📂 Uploader un fichier Excel", type=["xlsx"])
-report_title = st.text_input("✏️ Titre du rapport", "Revue de presse")
+        if not file:
+            return render_template("index.html", error="Aucun fichier uploadé")
 
-if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file, sheet_name="Articles")
-        issues, col_map, content_col, title_col = validate_dataframe(df)
+        try:
+            df = pd.read_excel(file, sheet_name="Articles")
+            issues, col_map, content_col, title_col = validate_dataframe(df)
 
-        if issues:
-            st.warning("⚠️ Problèmes détectés :")
-            for i in issues:
-                st.write("- " + i)
+            if not col_map:
+                return render_template("index.html", error="Colonnes requises introuvables", issues=issues)
 
-        if not col_map:
-            st.error("❌ Colonnes requises introuvables")
-        else:
             rows = []
-            progress = st.progress(0)
-            total = len(df)
-
             for idx, row in df.iterrows():
                 publication = str(row.get(col_map["publication"], "")).strip()
                 url = str(row.get(col_map["URL"], "")).strip() or None
@@ -152,7 +147,7 @@ if uploaded_file:
 
                 try:
                     summary = smart_summarize(publication, date_out, title_val, content_val, url)
-                except Exception as e:
+                except Exception:
                     summary = title_val or "Résumé indisponible"
 
                 rows.append({
@@ -162,19 +157,14 @@ if uploaded_file:
                     "url": url
                 })
 
-                progress.progress((idx + 1) / total)
-
             html_out = build_email_html(rows, title=report_title)
+            return render_template("result.html", html_out=html_out, issues=issues)
 
-            st.subheader("📄 Rapport généré")
-            st.markdown(html_out, unsafe_allow_html=True)
+        except Exception as e:
+            return render_template("index.html", error=f"Erreur lecture ou traitement Excel : {e}")
 
-            st.download_button(
-                "⬇️ Télécharger le rapport HTML",
-                data=html_out,
-                file_name="rapport.html",
-                mime="text/html"
-            )
+    return render_template("index.html")
 
-    except Exception as e:
-        st.error(f"Erreur lecture ou traitement Excel : {e}")
+# --- Exécution locale ---
+if __name__ == "__main__":
+    app.run(debug=True)
