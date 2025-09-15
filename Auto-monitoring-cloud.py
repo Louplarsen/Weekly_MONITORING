@@ -1,6 +1,5 @@
 import os
 import html
-import unicodedata
 from datetime import datetime
 import pandas as pd
 from dateutil import parser as dateparser
@@ -27,22 +26,6 @@ CONTENT_CANDIDATES = ["snippet", "content", "texte", "text", "body", "résumé",
 TITLE_CANDIDATES = ["article", "titre", "title", "intitulé", "headline"]
 
 # --- Fonctions utilitaires ---
-def normalize_colname(name: str) -> str:
-    name = str(name).strip().lower()
-    name = ''.join(
-        c for c in unicodedata.normalize("NFD", name)
-        if unicodedata.category(c) != "Mn"
-    )
-    return name
-
-def find_col(df, candidates):
-    normalized_map = {normalize_colname(c): c for c in df.columns}
-    for cand in candidates:
-        norm_cand = normalize_colname(cand)
-        if norm_cand in normalized_map:
-            return normalized_map[norm_cand]
-    return None
-
 def coerce_date(x):
     if pd.isna(x) or str(x).strip() == "":
         return None
@@ -50,6 +33,13 @@ def coerce_date(x):
         return dateparser.parse(str(x), dayfirst=True, fuzzy=True)
     except Exception:
         return None
+
+def find_col(df, candidates):
+    for cand in candidates:
+        for col in df.columns:
+            if col.strip().lower() == cand.strip().lower():
+                return col
+    return None
 
 def validate_dataframe(df):
     issues = []
@@ -80,14 +70,6 @@ def validate_dataframe(df):
     df = df.copy()
     df["_parsed_date"] = parsed_dates
 
-    empty_rows = df[df[pub_col].astype(str).str.strip().eq("")]
-    if not empty_rows.empty:
-        issues.append(f"{len(empty_rows)} ligne(s) avec '{pub_col}' vide.")
-
-    invalid_urls = [i + 2 for i, val in df[url_col].items() if val and not validators.url(str(val))]
-    if invalid_urls:
-        issues.append(f"URLs invalides aux lignes {invalid_urls}")
-
     return issues, col_map, content_col, title_col
 
 def smart_summarize(publication, date_str, title, content, url, max_words=60):
@@ -100,23 +82,16 @@ def smart_summarize(publication, date_str, title, content, url, max_words=60):
     resp = client.responses.create(model=OPENAI_MODEL, input=prompt)
     return resp.output_text.strip()
 
-def html_escape(s):
-    return html.escape("" if s is None else str(s))
-
 def build_email_html(rows, title="Revue de presse"):
-    parts = []
-    parts.append('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45;">')
-    parts.append(f'<h1 style="font-size:20px;margin-bottom:16px;">{html_escape(title)}</h1>')
+    parts = [f"<h1>{html.escape(title)}</h1>"]
     for r in rows:
-        parts.append('<div style="margin-bottom:14px;padding:12px;border:1px solid #e6e6e6;border-radius:8px;">')
-        parts.append(f'<div><b>Publication:</b> {html_escape(r["publication"])}</div>')
-        parts.append(f'<div><b>Date:</b> {html_escape(r["date"])}</div>')
-        parts.append(f'<div><b>Résumé:</b> {html_escape(r["summary"])}</div>')
+        parts.append("<div style='margin-bottom:12px;padding:10px;border:1px solid #ccc;border-radius:5px;'>")
+        parts.append(f"<b>Publication:</b> {html.escape(r['publication'])}<br>")
+        parts.append(f"<b>Date:</b> {html.escape(r['date'])}<br>")
+        parts.append(f"<b>Résumé:</b> {html.escape(r['summary'])}<br>")
         if r.get("url"):
-            url_esc = html_escape(r["url"])
-            parts.append(f'<div><b>Lien:</b> <a href="{url_esc}">{url_esc}</a></div>')
-        parts.append('</div>')
-    parts.append('</div>')
+            parts.append(f"<b>Lien:</b> <a href='{html.escape(r['url'])}'>{html.escape(r['url'])}</a>")
+        parts.append("</div>")
     return "\n".join(parts)
 
 # --- Routes Flask ---
@@ -125,18 +100,14 @@ def index():
     if request.method == "POST":
         report_title = request.form.get("title", "Revue de presse")
         file = request.files.get("file")
-
         if not file:
             return render_template("index.html", error="Aucun fichier uploadé")
 
         try:
-            df = pd.read_excel(file, sheet_name="Articles")
+            df = pd.read_excel(file)
             issues, col_map, content_col, title_col = validate_dataframe(df)
-
-            if not col_map:
-                return render_template("index.html", error="Colonnes requises introuvables", issues=issues)
-
             rows = []
+
             for idx, row in df.iterrows():
                 publication = str(row.get(col_map["publication"], "")).strip()
                 url = str(row.get(col_map["URL"], "")).strip() or None
@@ -144,18 +115,11 @@ def index():
                 date_out = dt.strftime("%d/%m/%Y") if isinstance(dt, datetime) else str(row.get(col_map["published"], "")).strip()
                 title_val = str(row.get(title_col, "")).strip() if title_col else publication
                 content_val = str(row.get(content_col, "")).strip() if content_col else ""
-
                 try:
                     summary = smart_summarize(publication, date_out, title_val, content_val, url)
                 except Exception:
                     summary = title_val or "Résumé indisponible"
-
-                rows.append({
-                    "publication": publication,
-                    "date": date_out,
-                    "summary": summary,
-                    "url": url
-                })
+                rows.append({"publication": publication, "date": date_out, "summary": summary, "url": url})
 
             html_out = build_email_html(rows, title=report_title)
             return render_template("result.html", html_out=html_out, issues=issues)
@@ -165,6 +129,5 @@ def index():
 
     return render_template("index.html")
 
-# --- Exécution locale ---
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
